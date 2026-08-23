@@ -1,0 +1,18 @@
+bind: 0.0.0.0
+port: 8000
+secret: ""           # 管理 key（X-Admin-Key）兼混淆密钥，可被 ADMIN_KEY 环境变量覆盖
+alert_token_limit: 5000
+database:
+  type: sqlite
+  host: ""
+  port: 0
+  name: data/app.db
+telegram:
+  bot_token: ""      # 可被 TELEGRAM_BOT_TOKEN 环境变量覆盖
+  admins: []         # 管理员 tgid 列表
+llama_remote:
+  base_url: "http://<remote>:8080"          # 远端 llama-server 推理地址
+  model: "Hy-MT2-7B"                        # 远端模型 id
+  api_key: ""                               # 远端 --api-key（未启用留空）
+  control_url: "http://<remote>:9090"       # Windows agent 控制地址
+  control_token: ""                         # agent 鉴权 token

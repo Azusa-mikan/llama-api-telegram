@@ -1,0 +1,122 @@
+import threading
+import time
+from collections import deque
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from src.constant import TIME_FORMAT
+
+TZ = ZoneInfo("Asia/Shanghai")
+
+ALERT_WINDOW = 60.0
+ALERT_STREAK = 2
+ALERT_THROTTLE = 300.0
+
+
+class Counters:
+    """内存用量计数：请求路径只碰这里，定期由 flush 落盘。"""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._usage: dict[int, int] = {}
+        self._last_used: dict[int, datetime] = {}
+        self._ips: dict[int, set[str]] = {}
+        self._new_ips: dict[int, set[str]] = {}
+        self._tokens: dict[int, deque[tuple[float, int]]] = {}
+        self._streak: dict[int, int] = {}
+        self._last_alert: dict[int, float] = {}
+        self._total = 0
+        self._today = 0
+        self._flushed_total = 0
+        self._flushed_today = 0
+        self._today_date = self._date()
+
+    @staticmethod
+    def _date() -> str:
+        return datetime.now(TZ).strftime("%Y-%m-%d")
+
+    def seed(
+        self,
+        total: int,
+        today: int,
+        date: str,
+        ips: dict[int, set[str]],
+    ) -> None:
+        with self._lock:
+            self._total = total
+            self._today = today
+            self._flushed_total = total
+            self._flushed_today = today
+            self._today_date = date or self._date()
+            self._ips = {tgid: set(ips.get(tgid, ())) for tgid in ips}
+
+    def record(self, tgid: int, ip: str) -> tuple[bool, int, str]:
+        """纯内存记账。返回 (是否新 IP, 累计 IP 数, 本次时间串)。"""
+        with self._lock:
+            now = datetime.now(TZ)
+            if now.strftime("%Y-%m-%d") != self._today_date:
+                self._today_date = now.strftime("%Y-%m-%d")
+                self._today = 0
+            self._usage[tgid] = self._usage.get(tgid, 0) + 1
+            self._last_used[tgid] = now
+            self._total += 1
+            self._today += 1
+
+            seen = self._ips.setdefault(tgid, set())
+            is_new = ip not in seen
+            if is_new:
+                seen.add(ip)
+                self._new_ips.setdefault(tgid, set()).add(ip)
+            return is_new, len(seen), now.strftime(TIME_FORMAT)
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "total_requests": self._total,
+                "today_requests": self._today,
+            }
+
+    def record_tokens(self, tgid: int, tokens: int, limit: int) -> tuple[bool, int]:
+        """记录生成 token 并维护滑动窗口。返回 (是否触发预警, 窗口内 token 总数)。"""
+        with self._lock:
+            now = time.monotonic()
+            q = self._tokens.setdefault(tgid, deque())
+            q.append((now, tokens))
+            while q and now - q[0][0] > ALERT_WINDOW:
+                q.popleft()
+            total = sum(t for _, t in q)
+
+            if total >= limit:
+                self._streak[tgid] = self._streak.get(tgid, 0) + 1
+            else:
+                self._streak[tgid] = 0
+
+            alerted = (
+                self._streak[tgid] >= ALERT_STREAK
+                and now - self._last_alert.get(tgid, 0.0) >= ALERT_THROTTLE
+            )
+            if alerted:
+                self._last_alert[tgid] = now
+            return alerted, total
+
+    def drain(self) -> dict:
+        """取走自上次落盘以来的增量并清零增量区。"""
+        with self._lock:
+            data = {
+                "usage": self._usage,
+                "last_used": self._last_used,
+                "new_ips": self._new_ips,
+                "ips": self._ips,
+                "total_delta": self._total - self._flushed_total,
+                "today_delta": self._today - self._flushed_today,
+                "date": self._today_date,
+            }
+            self._usage = {}
+            self._last_used = {}
+            self._new_ips = {}
+            self._flushed_total = self._total
+            self._flushed_today = self._today
+            return data
+
+
+counters = Counters()

@@ -1,0 +1,17 @@
+{
+  "host": "0.0.0.0",
+  "port": 9090,
+  "token": "CHANGE_ME",
+  "health_url": "http://127.0.0.1:8080/health",
+  "notify_url": "",
+  "notify_token": "",
+  "cmd": [
+    "K:/Azusa-Mikan/llama-cpp-server/llama-b10590-bin-win-cuda-12.4-x64/llama-server.exe",
+    "--host", "0.0.0.0",
+    "--port", "8080",
+    "--model", "K:/Azusa-Mikan/llama-cpp-server/model/Hy-MT2-7B-Q4_K_M.gguf",
+    "--ctx-size", "8192",
+    "--parallel", "4",
+    "--n-gpu-layers", "all"
+  ]
+}

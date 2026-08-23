@@ -1,0 +1,18 @@
+[project]
+name = "llama-api"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.141.1",
+    "pydantic>=2.13.4",
+    "pyyaml>=6.0.3",
+    "uvicorn>=0.52.4",
+    "aiosqlite==0.22.1",
+    "asyncmy==0.2.11",
+    "asyncpg==0.31.0",
+    "sqlalchemy==2.0.51",
+    "pytelegrambotapi>=4.36.1",
+    "httpx>=0.28.1",
+]
