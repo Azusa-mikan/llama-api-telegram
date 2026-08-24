@@ -5,9 +5,9 @@ import subprocess
 import sys
 import threading
 import time
-import urllib.request
 from pathlib import Path
 
+import httpx
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException
 
@@ -118,8 +118,8 @@ _proc_lock = threading.Lock()
 
 def _healthy() -> bool:
     try:
-        with urllib.request.urlopen(HEALTH_URL, timeout=1) as resp:
-            return resp.status == 200
+        resp = httpx.get(HEALTH_URL, timeout=1.0)
+        return resp.status_code == 200
     except Exception:
         return False
 
@@ -142,16 +142,13 @@ def _notify(status: str, *, force: bool = False) -> bool:
     if not NOTIFY_URL:
         return False
     try:
-        req = urllib.request.Request(
+        resp = httpx.post(
             NOTIFY_URL,
-            data=json.dumps({"status": status, "force": force}).encode(),
-            headers={"Content-Type": "application/json", "X-Admin-Key": NOTIFY_TOKEN},
-            method="POST",
+            json={"status": status, "force": force},
+            headers={"X-Admin-Key": NOTIFY_TOKEN},
+            timeout=5.0,
         )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            if resp.status < 200 or resp.status >= 300:
-                return False
-        return True
+        return 200 <= resp.status_code < 300
     except Exception:
         logger.warning("notify %s failed", status)
         return False
