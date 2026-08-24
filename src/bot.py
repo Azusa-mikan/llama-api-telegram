@@ -177,9 +177,7 @@ async def cmd_stop_llama(message: types.Message):
     if uid is None or not _is_admin(uid):
         return
     try:
-        state = await llama_service.stop()
-        if state == "stopped":
-            publish_status("stopped", force=True)
+        await llama_service.stop()
         await bot.reply_to(message, "🛑 已停止")
     except Exception:
         await bot.reply_to(message, "操作失败，请稍后重试。")

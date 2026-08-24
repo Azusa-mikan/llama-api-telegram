@@ -207,12 +207,6 @@ def start():
             threading.Thread(
                 target=_notify_ready, args=(False,), daemon=True
             ).start()
-        else:
-            # An explicit start request while already running still produces a
-            # notification, without making normal health polling noisy.
-            threading.Thread(
-                target=_notify_ready, args=(True,), daemon=True
-            ).start()
     return {"status": "running" if already else "starting"}
 
 
