@@ -83,7 +83,9 @@ async def cmd_start(message: types.Message):
         "欢迎使用 Azusa-Mikan 翻译服务 🤖\n"
         "基于 AI 大模型的翻译 API，完全自建，不保证稳定。\n"
         "/key — 获取 API Key\n"
-        "/status — 查看服务状态",
+        "/status — 查看服务状态\n\n"
+        f"API 地址: `{CONFIG.public_url}`",
+        parse_mode="Markdown",
     )
 
 
@@ -139,7 +141,8 @@ async def cmd_status(message: types.Message):
             (
                 f"服务状态: {text}\n"
                 f"总请求数: {st.total_requests}\n"
-                f"今日请求数: {st.today_requests}"
+                f"今日请求数: {st.today_requests}\n\n"
+                f"API 地址: `{CONFIG.public_url}`"
             ),
             parse_mode="Markdown",
         )

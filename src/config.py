@@ -36,6 +36,7 @@ class FinalConfig(BaseModel):
     port: int
     secret: str
     alert_token_limit: int = 5000
+    public_url: str
     database: DatabaseConfig
     telegram: TelergamConfig
     llama_remote: LlamaRemoteConfig
