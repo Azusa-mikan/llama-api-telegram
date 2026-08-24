@@ -7,8 +7,9 @@ _QUIET_PATHS = {"/status", "/health"}
 
 
 def _is_quiet_request(record: logging.LogRecord) -> bool:
-    if record.name == "httpx" and len(record.args) >= 2:
-        method, url = record.args[0], record.args[1]
+    args = record.args
+    if record.name == "httpx" and isinstance(args, tuple) and len(args) >= 2:
+        method, url = args[0], args[1]
         return str(method) == "GET" and urlsplit(str(url)).path in _QUIET_PATHS
 
     message = record.getMessage()

@@ -30,8 +30,9 @@ _QUIET_PATHS = {"/status", "/health"}
 
 class _QuietRequestFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        if record.name == "httpx" and len(record.args) >= 2:
-            method, url = record.args[0], record.args[1]
+        args = record.args
+        if record.name == "httpx" and isinstance(args, tuple) and len(args) >= 2:
+            method, url = args[0], args[1]
             return not (
                 str(method) == "GET"
                 and urlsplit(str(url)).path in _QUIET_PATHS
