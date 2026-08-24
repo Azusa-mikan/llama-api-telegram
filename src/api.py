@@ -1,6 +1,6 @@
 import asyncio
+import hmac
 import json
-import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal
@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from src import llama_service
 from src.config import CONFIG
+from src.log import apilog
 from src.constant import TIME_FORMAT
 from src.counters import counters
 from src.db import (
@@ -23,24 +24,44 @@ from src.db import (
 from src.events import alert_queue, publish_alert
 
 FLUSH_INTERVAL = 5.0
+STATUS_POLL_INTERVAL = 3.0
 
 _client: httpx.AsyncClient
 _last_status: str | None = None
 
 
-def _publish_status(status: Literal["ready", "stopped"]) -> None:
+def publish_status(
+    status: Literal["ready", "stopped"], *, force: bool = False
+) -> None:
     global _last_status
-    if status == _last_status:
+    if not force and status == _last_status:
         return
     _last_status = status
     publish_alert({"type": "llama_status", "status": status})
 
 
-async def _notify_initial() -> None:
-    await asyncio.sleep(5)
-    st = await llama_service.status()
-    if st.ready:
-        _publish_status("ready")
+async def _monitor_llama_status() -> None:
+    """补偿 agent 回调丢失，并只在确认控制端可达时发布 stopped。"""
+    observed: Literal["ready", "stopped"] | None = None
+    while True:
+        try:
+            st = await llama_service.status()
+            if st.reachable:
+                current: Literal["ready", "stopped"] = "ready" if st.ready else "stopped"
+                if observed is None:
+                    observed = current
+                    # Preserve the old behavior: announce a running model on startup,
+                    # but do not announce an already-stopped model as a new event.
+                    if current == "ready":
+                        publish_status(current)
+                elif current != observed:
+                    observed = current
+                    publish_status(current)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            apilog.exception("模型状态监视失败")
+        await asyncio.sleep(STATUS_POLL_INTERVAL)
 
 
 def _remote_headers() -> dict[str, str]:
@@ -69,14 +90,19 @@ def _try_json(resp: httpx.Response) -> dict | None:
 async def _flush_loop():
     while True:
         await asyncio.sleep(FLUSH_INTERVAL)
+        data = counters.drain()
         try:
-            await flush_counters(counters.drain())
+            await flush_counters(data)
+        except asyncio.CancelledError:
+            counters.restore(data)
+            raise
         except Exception:
-            logging.getLogger("api").exception("计数落盘失败")
+            counters.restore(data)
+            apilog.exception("计数落盘失败")
 
 
 def require_admin(x_admin_key: str = Header(default="")) -> None:
-    if x_admin_key != CONFIG.secret:
+    if not CONFIG.secret or not hmac.compare_digest(x_admin_key, CONFIG.secret):
         raise HTTPException(status_code=401, detail="invalid admin key")
 
 
@@ -94,7 +120,7 @@ async def require_user(authorization: str = Header(default="")) -> dict:
 def _maybe_rate_alert(user: dict, tokens: int) -> None:
     if tokens <= 0:
         return
-    logging.getLogger("api").info(f"TOKENS tgid={user['tgid']} tokens={tokens}")
+    apilog.info(f"TOKENS tgid={user['tgid']} tokens={tokens}")
     alerted, window_total = counters.record_tokens(
         user["tgid"], tokens, CONFIG.alert_token_limit
     )
@@ -141,15 +167,22 @@ async def lifespan(app: FastAPI):
     tasks = [
         asyncio.create_task(start_bot()),
         asyncio.create_task(listen_alerts()),
-        asyncio.create_task(_notify_initial()),
+        asyncio.create_task(_monitor_llama_status()),
         flusher,
     ]
     yield
     alert_queue.put(None)
     for t in tasks:
         t.cancel()
-    await flush_counters(counters.drain())
+    await asyncio.gather(*tasks, return_exceptions=True)
+    data = counters.drain()
+    try:
+        await flush_counters(data)
+    except Exception:
+        counters.restore(data)
+        apilog.exception("关停时计数落盘失败")
     await _client.aclose()
+    await llama_service.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -162,7 +195,7 @@ async def chat_completions(
     user: dict = Depends(require_user),
 ):
     await _record_request(user, request)
-    body = {**body, **CONFIG.llama_remote.model_parameters}
+    body = {"model": CONFIG.llama_remote.model, **body, **CONFIG.llama_remote.model_parameters}
     if body.get("stream"):
         return await _stream_completion(body, user)
     return await _plain_completion(body, user)
@@ -182,7 +215,12 @@ async def _plain_completion(body: dict, user: dict):
             status_code=resp.status_code,
             content=_try_json(resp) or _openai_error(resp.status_code, resp.text),
         )
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError:
+        return JSONResponse(
+            status_code=502, content=_openai_error(502, "invalid response from model")
+        )
     _maybe_rate_alert(user, data.get("usage", {}).get("completion_tokens", 0))
     return data
 
@@ -198,6 +236,7 @@ async def _stream_completion(body: dict, user: dict):
             status_code=503, content=_openai_error(503, "model not running")
         )
     if resp.status_code != 200:
+        await resp.aread()
         content = _try_json(resp) or _openai_error(resp.status_code, resp.text)
         await resp.aclose()
         return JSONResponse(status_code=resp.status_code, content=content)
@@ -210,6 +249,7 @@ async def _stream_completion(body: dict, user: dict):
 
 async def _iter_stream(resp: httpx.Response, user: dict):
     completion_tokens = 0
+    reported_tokens: int | None = None
     try:
         async for line in resp.aiter_lines():
             yield (line + "\n").encode()
@@ -222,6 +262,9 @@ async def _iter_stream(resp: httpx.Response, user: dict):
                 chunk = json.loads(payload)
             except json.JSONDecodeError:
                 continue
+            usage = chunk.get("usage")
+            if isinstance(usage, dict) and isinstance(usage.get("completion_tokens"), int):
+                reported_tokens = usage["completion_tokens"]
             choices = chunk.get("choices")
             if choices:
                 delta = choices[0].get("delta", {})
@@ -229,11 +272,11 @@ async def _iter_stream(resp: httpx.Response, user: dict):
                     completion_tokens += 1
     finally:
         await resp.aclose()
-    if completion_tokens:
-        logging.getLogger("api").info(f"TOKENS tgid={user['tgid']} tokens={completion_tokens}")
-    alerted, window_total = counters.record_tokens(
-        user["tgid"], completion_tokens, CONFIG.alert_token_limit
-    )
+    completion_tokens = reported_tokens if reported_tokens is not None else completion_tokens
+    if completion_tokens <= 0:
+        return
+    apilog.info(f"TOKENS tgid={user['tgid']} tokens={completion_tokens}")
+    alerted, window_total = counters.record_tokens(user["tgid"], completion_tokens, CONFIG.alert_token_limit)
     if alerted:
         publish_alert(
             {
@@ -247,7 +290,7 @@ async def _iter_stream(resp: httpx.Response, user: dict):
 
 
 @app.get("/v1/models")
-async def list_models():
+async def list_models(_: dict = Depends(require_user)):
     try:
         resp = await _client.get("/v1/models", headers=_remote_headers())
     except httpx.HTTPError:
@@ -257,16 +300,10 @@ async def list_models():
     return resp.json()
 
 
-@app.post("/admin/unload", dependencies=[Depends(require_admin)])
-async def unload():
-    await llama_service.stop()
-    return {"status": "unloaded"}
-
-
 @app.post("/admin/agent/event", dependencies=[Depends(require_admin)])
 async def agent_event(body: dict):
     status = body.get("status")
     if status not in ("stopped", "ready"):
         raise HTTPException(status_code=400, detail="invalid status")
-    _publish_status(status)
+    publish_status(status, force=body.get("force") is True)
     return {"ok": True}

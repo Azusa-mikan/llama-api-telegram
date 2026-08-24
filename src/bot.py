@@ -1,9 +1,11 @@
 import asyncio
+from html import escape
 
 from telebot import types
 from telebot.async_telebot import AsyncTeleBot
 
 from src import llama_service, users_service
+from src.api import publish_status
 from src.config import CONFIG
 from src.log import tglog
 from src.constant import PROJECT_ROOT
@@ -75,7 +77,7 @@ async def cmd_start(message: types.Message):
         await bot.reply_to(message, "你已被禁止使用此翻译服务")
         return
     await bot.send_document(
-        chat_id=uid,
+        chat_id=message.chat.id,
         document=("Disclaimer 免责声明.md", disclaimer_file.read_bytes()),
     )
     await bot.reply_to(
@@ -84,8 +86,8 @@ async def cmd_start(message: types.Message):
         "基于 AI 大模型的翻译 API，完全自建，不保证稳定。\n"
         "/key — 获取 API Key\n"
         "/status — 查看服务状态\n\n"
-        f"API 地址: `{CONFIG.public_url}`",
-        parse_mode="Markdown",
+        f"API 地址: <code>{escape(CONFIG.public_url)}</code>",
+        parse_mode="HTML",
     )
 
 
@@ -112,10 +114,10 @@ async def cmd_key(message: types.Message):
         message,
         (
             f"✅ 生成成功！你的 API Key：\n\n"
-            f"`{new_key}`\n"
+            f"<code>{escape(new_key)}</code>\n"
             f"\n⚠️ 此消息 30 秒后自动删除，请妥善保管你的 Key。"
         ),
-        parse_mode="Markdown",
+        parse_mode="HTML",
         protect_content=False,
     )
     await asyncio.sleep(30)
@@ -142,9 +144,9 @@ async def cmd_status(message: types.Message):
                 f"服务状态: {text}\n"
                 f"总请求数: {st.total_requests}\n"
                 f"今日请求数: {st.today_requests}\n\n"
-                f"API 地址: `{CONFIG.public_url}`"
+                f"API 地址: <code>{escape(CONFIG.public_url)}</code>"
             ),
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
     except Exception:
         await bot.reply_to(message, "操作失败，请稍后重试。")
@@ -157,7 +159,14 @@ async def cmd_start_llama(message: types.Message):
         return
     try:
         state = await llama_service.start()
-        await bot.reply_to(message, "✅ 已开始加载，完成后会通知" if state == "loading" else "✅ 已在运行")
+        if state in {"starting", "loading"}:
+            reply = "✅ 已开始加载，完成后会通知"
+        else:
+            status = await llama_service.status()
+            if status.ready:
+                publish_status("ready", force=True)
+            reply = "✅ 已在运行"
+        await bot.reply_to(message, reply)
     except Exception:
         await bot.reply_to(message, "操作失败，请稍后重试。")
 
@@ -168,7 +177,9 @@ async def cmd_stop_llama(message: types.Message):
     if uid is None or not _is_admin(uid):
         return
     try:
-        await llama_service.stop()
+        state = await llama_service.stop()
+        if state == "stopped":
+            publish_status("stopped", force=True)
         await bot.reply_to(message, "🛑 已停止")
     except Exception:
         await bot.reply_to(message, "操作失败，请稍后重试。")
@@ -247,7 +258,7 @@ async def cmd_users(message: types.Message):
             await bot.reply_to(
                 message,
                 f"📋 用户 {target} 详情:\n"
-                f"名称: {user.name}\n"
+                f"名称: {escape(user.name)}\n"
                 f"状态: {status}\n"
                 f"调用次数: {user.usage_count}\n"
                 f"最后调用: {user.final_usage_at or '无'}\n"
@@ -259,10 +270,10 @@ async def cmd_users(message: types.Message):
             await bot.reply_to(message, "暂无用户")
             return
         lines = [
-            f"{'🔴 ' if u.banned else '🟢 '}`{u.tgid}` {u.name}"
+            f"{'🔴 ' if u.banned else '🟢 '}{u.tgid} {u.name}"
             for u in rows
         ]
         for i in range(0, len(lines), 30):
-            await bot.reply_to(message, "\n".join(lines[i : i + 30]), parse_mode="Markdown")
+            await bot.reply_to(message, "\n".join(lines[i : i + 30]))
     except Exception:
         await bot.reply_to(message, "操作失败，请稍后重试。")

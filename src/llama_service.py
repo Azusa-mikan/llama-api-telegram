@@ -12,6 +12,7 @@ class LlamaStatus:
     loading: bool
     total_requests: int
     today_requests: int
+    reachable: bool = True
 
 
 _client: httpx.AsyncClient | None = None
@@ -37,18 +38,21 @@ async def _call(method: str, path: str) -> dict:
 
 
 async def status() -> LlamaStatus:
+    reachable = True
     try:
         data = await _call("GET", "/status")
         running = bool(data.get("running"))
         ready = bool(data.get("ready"))
     except Exception:
         running = ready = False
+        reachable = False
     snapshot = counters.snapshot()
     return LlamaStatus(
         ready=ready,
         loading=running and not ready,
         total_requests=snapshot["total_requests"],
         today_requests=snapshot["today_requests"],
+        reachable=reachable,
     )
 
 
@@ -60,3 +64,10 @@ async def start() -> str:
 async def stop() -> str:
     data = await _call("POST", "/stop")
     return data.get("status", "stopped")
+
+
+async def close() -> None:
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None

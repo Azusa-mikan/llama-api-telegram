@@ -113,6 +113,7 @@ else:
 
 app = FastAPI()
 _proc: subprocess.Popen | None = None
+_proc_lock = threading.Lock()
 
 
 def _healthy() -> bool:
@@ -137,25 +138,30 @@ def _auth(x_token: str = Header(default="")) -> None:
         raise HTTPException(status_code=401)
 
 
-def _notify(status: str) -> None:
+def _notify(status: str, *, force: bool = False) -> bool:
     if not NOTIFY_URL:
-        return
+        return False
     try:
         req = urllib.request.Request(
             NOTIFY_URL,
-            data=json.dumps({"status": status}).encode(),
+            data=json.dumps({"status": status, "force": force}).encode(),
             headers={"Content-Type": "application/json", "X-Admin-Key": NOTIFY_TOKEN},
             method="POST",
         )
-        urllib.request.urlopen(req, timeout=5)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if resp.status < 200 or resp.status >= 300:
+                return False
+        return True
     except Exception:
         logger.warning("notify %s failed", status)
+        return False
 
 
-def _notify_ready() -> None:
+def _notify_ready(force: bool = False) -> None:
+    if not NOTIFY_URL:
+        return
     for _ in range(60):
-        if _healthy():
-            _notify("ready")
+        if _healthy() and _notify("ready", force=force):
             return
         time.sleep(1)
 
@@ -169,35 +175,50 @@ def status():
 @app.post("/start", dependencies=[Depends(_auth)])
 def start():
     global _proc
-    already = _running() or _healthy()
-    if not already:
-        _proc = subprocess.Popen(
-            CMD,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        _assign_to_job(_proc)
-        threading.Thread(target=_log_lines, args=(_proc.stdout,), daemon=True).start()
-    threading.Thread(target=_notify_ready, daemon=True).start()
+    with _proc_lock:
+        already = _running() or _healthy()
+        if not already:
+            _proc = subprocess.Popen(
+                CMD,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            _assign_to_job(_proc)
+            threading.Thread(target=_log_lines, args=(_proc.stdout,), daemon=True).start()
+            threading.Thread(
+                target=_notify_ready, args=(False,), daemon=True
+            ).start()
+        else:
+            # An explicit start request while already running still produces a
+            # notification, without making normal health polling noisy.
+            threading.Thread(
+                target=_notify_ready, args=(True,), daemon=True
+            ).start()
     return {"status": "running" if already else "starting"}
 
 
 @app.post("/stop", dependencies=[Depends(_auth)])
 def stop():
     global _proc
-    proc = _proc
-    if proc is not None and proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
-        _proc = None
-    stopped = not _healthy()
+    with _proc_lock:
+        proc = _proc
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+            _proc = None
+        stopped = not _healthy()
     if stopped:
-        _notify("stopped")
+        if not NOTIFY_URL:
+            return {"status": "stopped"}
+        for _ in range(3):
+            if _notify("stopped"):
+                break
+            time.sleep(1)
     return {"status": "stopped" if stopped else "running"}
 
 

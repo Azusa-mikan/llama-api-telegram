@@ -43,3 +43,4 @@ for _name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
     _logger.addHandler(_ForwardToFastAPI())
 
 tglog = logging.getLogger("bot")
+apilog = logging.getLogger("api")

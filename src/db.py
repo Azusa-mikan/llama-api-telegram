@@ -2,6 +2,7 @@ import hashlib
 import secrets
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote_plus
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
@@ -29,12 +30,13 @@ def _db_url() -> str:
         path = Path(db.name)
         if not path.is_absolute():
             path = PROJECT_ROOT / path
+        path.parent.mkdir(parents=True, exist_ok=True)
         return f"sqlite+aiosqlite:///{path}"
     if db.type == "mysql":
-        return f"mysql+asyncmy://{db.user}:{db.password}@{db.host}:{db.port}/{db.name}"
+        return f"mysql+asyncmy://{quote_plus(db.user)}:{quote_plus(db.password)}@{db.host}:{db.port}/{db.name}"
     if db.type == "mariadb":
-        return f"mariadb+asyncmy://{db.user}:{db.password}@{db.host}:{db.port}/{db.name}"
-    return f"postgresql+asyncpg://{db.user}:{db.password}@{db.host}:{db.port}/{db.name}"
+        return f"mariadb+asyncmy://{quote_plus(db.user)}:{quote_plus(db.password)}@{db.host}:{db.port}/{db.name}"
+    return f"postgresql+asyncpg://{quote_plus(db.user)}:{quote_plus(db.password)}@{db.host}:{db.port}/{db.name}"
 
 
 engine = create_async_engine(_db_url())

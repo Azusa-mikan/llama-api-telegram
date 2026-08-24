@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Literal, Any
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.constant import PROJECT_ROOT
 
@@ -19,7 +19,7 @@ class LlamaRemoteConfig(BaseModel):
     api_key: str = ""
     control_url: str = ""
     control_token: str = ""
-    model_parameters: dict[str, Any] = {}
+    model_parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 class DatabaseConfig(BaseModel):

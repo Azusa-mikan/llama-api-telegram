@@ -50,13 +50,18 @@ class Counters:
             self._today_date = date or self._date()
             self._ips = {tgid: set(ips.get(tgid, ())) for tgid in ips}
 
+    def _rollover_locked(self) -> None:
+        current_date = self._date()
+        if current_date != self._today_date:
+            self._today_date = current_date
+            self._today = 0
+            self._flushed_today = 0
+
     def record(self, tgid: int, ip: str) -> tuple[bool, int, str]:
         """纯内存记账。返回 (是否新 IP, 累计 IP 数, 本次时间串)。"""
         with self._lock:
             now = datetime.now(TZ)
-            if now.strftime("%Y-%m-%d") != self._today_date:
-                self._today_date = now.strftime("%Y-%m-%d")
-                self._today = 0
+            self._rollover_locked()
             self._usage[tgid] = self._usage.get(tgid, 0) + 1
             self._last_used[tgid] = now
             self._total += 1
@@ -71,6 +76,7 @@ class Counters:
 
     def snapshot(self) -> dict:
         with self._lock:
+            self._rollover_locked()
             return {
                 "total_requests": self._total,
                 "today_requests": self._today,
@@ -102,11 +108,12 @@ class Counters:
     def drain(self) -> dict:
         """取走自上次落盘以来的增量并清零增量区。"""
         with self._lock:
+            self._rollover_locked()
             data = {
-                "usage": self._usage,
-                "last_used": self._last_used,
-                "new_ips": self._new_ips,
-                "ips": self._ips,
+                "usage": dict(self._usage),
+                "last_used": dict(self._last_used),
+                "new_ips": {tgid: set(values) for tgid, values in self._new_ips.items()},
+                "ips": {tgid: set(values) for tgid, values in self._ips.items()},
                 "total_delta": self._total - self._flushed_total,
                 "today_delta": self._today - self._flushed_today,
                 "date": self._today_date,
@@ -117,6 +124,21 @@ class Counters:
             self._flushed_total = self._total
             self._flushed_today = self._today
             return data
+
+    def restore(self, data: dict) -> None:
+        """Put a failed persistence snapshot back into the pending deltas."""
+        with self._lock:
+            for tgid, delta in data["usage"].items():
+                self._usage[tgid] = self._usage.get(tgid, 0) + delta
+            for tgid, value in data["last_used"].items():
+                current = self._last_used.get(tgid)
+                if current is None or value > current:
+                    self._last_used[tgid] = value
+            for tgid, values in data["new_ips"].items():
+                self._new_ips.setdefault(tgid, set()).update(values)
+            self._flushed_total -= data["total_delta"]
+            if data["date"] == self._today_date:
+                self._flushed_today -= data["today_delta"]
 
 
 counters = Counters()
