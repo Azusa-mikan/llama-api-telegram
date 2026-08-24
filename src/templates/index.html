@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Copyright © Azusa-Mikan</title>
+		<link
+			href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600;700&family=Nunito:wght@400;600;700&display=swap"
+			rel="stylesheet"
+		/>
+		<style>
+			* {
+				margin: 0;
+				padding: 0;
+				box-sizing: border-box;
+			}
+
+			body {
+				background-color: #0a0c14;
+				min-height: 100vh;
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				overflow: hidden;
+			}
+
+			.container {
+				text-align: center;
+				position: relative;
+			}
+
+			.art-text {
+				font-family: "Quicksand", "Nunito", sans-serif;
+				position: relative;
+				z-index: 2;
+				font-size: clamp(1.3rem, 3.7vw, 2.35rem);
+				font-weight: 600;
+				letter-spacing: 0.12em;
+				color: #ffd6e0;
+				text-shadow:
+					0 0 15px rgba(255, 214, 224, 0.25),
+					0 0 30px rgba(255, 182, 193, 0.1);
+				user-select: none;
+			}
+
+			.art-text .year {
+				color: #b8c5d6;
+				font-weight: 400;
+			}
+
+			.sub-title {
+				margin-top: 0.9rem;
+				font-family: "Quicksand", "Nunito", sans-serif;
+				font-size: clamp(0.85rem, 2.1vw, 1.05rem);
+				font-weight: 500;
+				letter-spacing: 0.06em;
+				color: rgba(184, 197, 214, 0.9);
+				text-shadow: 0 0 12px rgba(184, 197, 214, 0.2);
+				user-select: none;
+			}
+
+			.glow-char {
+				display: inline-block;
+				will-change: transform, filter, text-shadow;
+				transition:
+					transform 90ms linear,
+					filter 90ms linear,
+					text-shadow 90ms linear;
+			}
+
+			.tiny-stars {
+				position: absolute;
+				top: 0;
+				left: 0;
+				width: 100%;
+				height: 100%;
+				z-index: 1;
+				pointer-events: none;
+			}
+
+			.star {
+				position: absolute;
+				color: rgba(255, 255, 255, 0.4);
+				font-size: 0.6rem;
+				animation: twinkle 3s ease-in-out infinite;
+			}
+
+			.cursor-trail {
+				position: fixed;
+				pointer-events: none;
+				z-index: 3;
+				color: #ffd6e0;
+				text-shadow: 0 0 10px rgba(255, 214, 224, 0.75);
+				transform: translate(-50%, -50%);
+				animation: trail-fade 680ms ease-out forwards;
+			}
+
+			.footer-link {
+				position: fixed;
+				left: 50%;
+				bottom: 1.2rem;
+				transform: translateX(-50%);
+				z-index: 2;
+				font-family: "Quicksand", "Nunito", sans-serif;
+				font-size: 0.9rem;
+				color: rgba(184, 197, 214, 0.88);
+				text-decoration: none;
+				letter-spacing: 0.04em;
+				transition: color 160ms ease, text-shadow 160ms ease;
+			}
+
+			.footer-link:hover {
+				color: #ffd6e0;
+				text-shadow: 0 0 10px rgba(255, 214, 224, 0.45);
+			}
+
+			@keyframes twinkle {
+				0%,
+				100% {
+					opacity: 0.2;
+					transform: scale(0.8);
+				}
+
+				50% {
+					opacity: 0.6;
+					transform: scale(1.2);
+				}
+			}
+
+			@keyframes trail-fade {
+				from {
+					opacity: var(--trail-opacity, 1);
+					transform: translate(-50%, -50%) scale(1);
+				}
+				to {
+					opacity: 0;
+					transform: translate(
+							calc(-50% + var(--drift-x, 0px)),
+							calc(-50% + var(--drift-y, -16px))
+						)
+						scale(0.55);
+				}
+			}
+
+		</style>
+	</head>
+
+	<body>
+		<div class="tiny-stars" id="stars"></div>
+
+		<div class="container">
+			<div class="art-text">
+				Copyright © <span class="year" id="year"></span> Azusa-Mikan
+			</div>
+			<div class="sub-title">今日请求数: {{ request_count }} | 总请求数: {{ total_requests }}</div>
+		</div>
+		<a
+			class="footer-link"
+			href="https://github.com/Azusa-mikan/llama-api-telegram"
+			target="_blank"
+			rel="noopener noreferrer"
+			>关于项目</a
+		>
+
+		<script>
+			document.getElementById("year").textContent = new Date().getFullYear();
+
+			const starsContainer = document.getElementById("stars");
+			const starCount = 100;
+			const starChars = ["✦", "·", "•"];
+
+			for (let i = 0; i < starCount; i++) {
+				const star = document.createElement("span");
+				star.className = "star";
+				star.textContent =
+					starChars[Math.floor(Math.random() * starChars.length)];
+				star.style.left = Math.random() * 100 + "%";
+				star.style.top = Math.random() * 100 + "%";
+				star.style.animationDelay = Math.random() * 3 + "s";
+				star.style.animationDuration = Math.random() * 2 + 2 + "s";
+				star.style.fontSize = Math.random() * 0.4 + 0.4 + "rem";
+				starsContainer.appendChild(star);
+			}
+
+			const artText = document.querySelector(".art-text");
+			const glowChars = [];
+			const baseShadow =
+				"0 0 15px rgba(255, 214, 224, 0.25), 0 0 30px rgba(255, 182, 193, 0.1)";
+			const trailChars = ["✦", "*", "+", "×", "✱", "✲", "✳", "✴", "⋆", "⋇", "⋈"];
+			let lastTrailAt = 0;
+
+			const wrapTextToChars = (root) => {
+				for (const node of Array.from(root.childNodes)) {
+					if (node.nodeType === Node.TEXT_NODE) {
+						const fragment = document.createDocumentFragment();
+						for (const char of node.textContent) {
+							if (char === " ") {
+								fragment.appendChild(document.createTextNode(" "));
+								continue;
+							}
+							const span = document.createElement("span");
+							span.className = "glow-char";
+							span.textContent = char;
+							fragment.appendChild(span);
+							glowChars.push(span);
+						}
+						node.replaceWith(fragment);
+					} else if (node.nodeType === Node.ELEMENT_NODE) {
+						wrapTextToChars(node);
+					}
+				}
+			};
+
+			const resetGlow = () => {
+				for (const char of glowChars) {
+					char.style.transform = "translateY(0)";
+					char.style.filter = "brightness(1)";
+					char.style.textShadow = "";
+				}
+			};
+
+			wrapTextToChars(artText);
+
+			artText.addEventListener("mousemove", (e) => {
+				for (const char of glowChars) {
+					const rect = char.getBoundingClientRect();
+					const dx = e.clientX - (rect.left + rect.width / 2);
+					const dy = e.clientY - (rect.top + rect.height / 2);
+					const distance = Math.hypot(dx, dy);
+					const strength = Math.max(0, 1 - distance / 40);
+
+					if (strength <= 0) {
+						char.style.transform = "translateY(0)";
+						char.style.filter = "brightness(1)";
+						char.style.textShadow = "";
+						continue;
+					}
+
+					const blur = 6 + 16 * strength;
+					const glowAlpha = 0.22 + 0.58 * strength;
+					const lift = -1.8 * strength;
+					const brightness = 1 + 0.75 * strength;
+
+					char.style.transform = `translateY(${lift}px)`;
+					char.style.filter = `brightness(${brightness})`;
+					char.style.textShadow =
+						`${baseShadow}, 0 0 ${blur}px rgba(255, 214, 224, ${glowAlpha})`;
+				}
+			});
+
+			artText.addEventListener("mouseleave", resetGlow);
+
+			document.addEventListener("mousemove", (e) => {
+				const now = performance.now();
+				if (now - lastTrailAt < 24) {
+					return;
+				}
+				lastTrailAt = now;
+
+				const trail = document.createElement("span");
+				trail.className = "cursor-trail";
+				trail.textContent = trailChars[Math.floor(Math.random() * trailChars.length)];
+				trail.style.left = `${e.clientX + (Math.random() * 10 - 5)}px`;
+				trail.style.top = `${e.clientY + (Math.random() * 10 - 5)}px`;
+				trail.style.fontSize = `${(Math.random() * 0.45 + 0.45).toFixed(2)}rem`;
+				trail.style.setProperty("--trail-opacity", (Math.random() * 0.25 + 0.7).toFixed(2));
+				trail.style.setProperty("--drift-x", `${(Math.random() * 20 - 10).toFixed(1)}px`);
+				trail.style.setProperty("--drift-y", `${(-18 - Math.random() * 16).toFixed(1)}px`);
+				document.body.appendChild(trail);
+				trail.addEventListener("animationend", () => trail.remove(), { once: true });
+			});
+		</script>
+	</body>
+</html>

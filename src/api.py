@@ -7,11 +7,12 @@ from typing import Literal
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.templating import Jinja2Templates
 
 from src import llama_service
 from src.config import CONFIG
 from src.log import apilog
-from src.constant import TIME_FORMAT
+from src.constant import PROJECT_ROOT, TIME_FORMAT
 from src.counters import counters
 from src.db import (
     TZ,
@@ -193,6 +194,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+templates = Jinja2Templates(directory=PROJECT_ROOT / "src" / "templates")
+
+
+@app.get("/", include_in_schema=False)
+async def index(request: Request):
+    snap = counters.snapshot()
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {
+            "request_count": snap["today_requests"],
+            "total_requests": snap["total_requests"],
+        },
+    )
 
 
 @app.post("/v1/chat/completions")
