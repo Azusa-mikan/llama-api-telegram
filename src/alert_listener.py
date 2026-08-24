@@ -88,9 +88,14 @@ async def send_usage_summary(data: UsageSummary):
     for index, row in enumerate(rows, 1):
         minutes = row["seconds"] / 60
         share = row["seconds"] / total_seconds * 100 if total_seconds else 0
+        duration = (
+            f"{minutes:.1f} 分钟"
+            if minutes >= 0.1
+            else f"{row['seconds']:.1f} 秒"
+        )
         lines.append(
             f"{index}. {row['name']}\n"
-            f"累计运行: {minutes:.1f} 分钟 | 占比: {share:.1f}%"
+            f"累计运行: {duration} | 占比: {share:.1f}%"
         )
     text = "\n".join(lines)
     for uid in CONFIG.telegram.admins:

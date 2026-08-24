@@ -103,12 +103,17 @@ async def _flush_loop():
 
 
 async def _usage_summary_loop() -> None:
+    last_completed_requests = counters.completed_request_count()
     while True:
         await asyncio.sleep(USAGE_SUMMARY_INTERVAL)
+        completed_requests = counters.completed_request_count()
+        if completed_requests == last_completed_requests:
+            continue
         date = counters.daily_usage_snapshot()
         raw_rows = await get_daily_usage(date)
         if not raw_rows:
             continue
+        last_completed_requests = completed_requests
         rows: list[UsageRow] = [
             {
                 "tgid": int(row["tgid"]),

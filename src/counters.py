@@ -18,6 +18,7 @@ class Counters:
         self._new_ips: dict[int, set[str]] = {}
         self._busy_seconds: dict[int, float] = {}
         self._daily_busy_seconds: dict[int, float] = {}
+        self._completed_requests = 0
         self._total = 0
         self._today = 0
         self._flushed_total = 0
@@ -89,12 +90,17 @@ class Counters:
                 self._daily_busy_seconds.get(tgid, 0.0) + duration
             )
             self._busy_seconds[tgid] = self._busy_seconds.get(tgid, 0.0) + duration
+            self._completed_requests += 1
 
     def daily_usage_snapshot(self) -> str:
         """Return the current local date for the daily summary."""
         with self._lock:
             self._rollover_locked()
             return self._today_date
+
+    def completed_request_count(self) -> int:
+        with self._lock:
+            return self._completed_requests
 
     def drain(self) -> dict:
         """取走自上次落盘以来的增量并清零增量区。"""
