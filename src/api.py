@@ -117,10 +117,30 @@ async def require_user(authorization: str = Header(default="")) -> dict:
     return user
 
 
-def _maybe_rate_alert(user: dict, tokens: int) -> None:
+def _usage_tokens(usage: object) -> tuple[int, int, int]:
+    """Return prompt, completion, and total tokens from an OpenAI usage object."""
+    if not isinstance(usage, dict):
+        return 0, 0, 0
+    prompt = usage.get("prompt_tokens", 0)
+    completion = usage.get("completion_tokens", 0)
+    if not isinstance(prompt, int) or prompt < 0:
+        prompt = 0
+    if not isinstance(completion, int) or completion < 0:
+        completion = 0
+    return prompt, completion, prompt + completion
+
+
+def _maybe_rate_alert(user: dict, usage: object) -> None:
+    prompt_tokens, completion_tokens, tokens = _usage_tokens(usage)
     if tokens <= 0:
         return
-    apilog.info(f"TOKENS tgid={user['tgid']} tokens={tokens}")
+    apilog.info(
+        "TOKENS tgid=%s prompt=%s completion=%s total=%s",
+        user["tgid"],
+        prompt_tokens,
+        completion_tokens,
+        tokens,
+    )
     alerted, window_total = counters.record_tokens(
         user["tgid"], tokens, CONFIG.alert_token_limit
     )
@@ -221,7 +241,7 @@ async def _plain_completion(body: dict, user: dict):
         return JSONResponse(
             status_code=502, content=_openai_error(502, "invalid response from model")
         )
-    _maybe_rate_alert(user, data.get("usage", {}).get("completion_tokens", 0))
+    _maybe_rate_alert(user, data.get("usage"))
     return data
 
 
@@ -249,7 +269,8 @@ async def _stream_completion(body: dict, user: dict):
 
 async def _iter_stream(resp: httpx.Response, user: dict):
     completion_tokens = 0
-    reported_tokens: int | None = None
+    prompt_tokens = 0
+    reported_usage: dict | None = None
     try:
         async for line in resp.aiter_lines():
             yield (line + "\n").encode()
@@ -263,8 +284,8 @@ async def _iter_stream(resp: httpx.Response, user: dict):
             except json.JSONDecodeError:
                 continue
             usage = chunk.get("usage")
-            if isinstance(usage, dict) and isinstance(usage.get("completion_tokens"), int):
-                reported_tokens = usage["completion_tokens"]
+            if isinstance(usage, dict):
+                reported_usage = usage
             choices = chunk.get("choices")
             if choices:
                 delta = choices[0].get("delta", {})
@@ -272,11 +293,22 @@ async def _iter_stream(resp: httpx.Response, user: dict):
                     completion_tokens += 1
     finally:
         await resp.aclose()
-    completion_tokens = reported_tokens if reported_tokens is not None else completion_tokens
-    if completion_tokens <= 0:
+    if reported_usage is not None:
+        prompt_tokens, completion_tokens, total_tokens = _usage_tokens(reported_usage)
+    else:
+        total_tokens = completion_tokens
+    if total_tokens <= 0:
         return
-    apilog.info(f"TOKENS tgid={user['tgid']} tokens={completion_tokens}")
-    alerted, window_total = counters.record_tokens(user["tgid"], completion_tokens, CONFIG.alert_token_limit)
+    apilog.info(
+        "TOKENS tgid=%s prompt=%s completion=%s total=%s",
+        user["tgid"],
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+    )
+    alerted, window_total = counters.record_tokens(
+        user["tgid"], total_tokens, CONFIG.alert_token_limit
+    )
     if alerted:
         publish_alert(
             {

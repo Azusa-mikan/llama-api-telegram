@@ -83,7 +83,7 @@ class Counters:
             }
 
     def record_tokens(self, tgid: int, tokens: int, limit: int) -> tuple[bool, int]:
-        """记录生成 token 并维护滑动窗口。返回 (是否触发预警, 窗口内 token 总数)。"""
+        """记录总 token 并维护滑动窗口。返回 (是否触发预警, 窗口内 token 总数)。"""
         with self._lock:
             now = time.monotonic()
             q = self._tokens.setdefault(tgid, deque())

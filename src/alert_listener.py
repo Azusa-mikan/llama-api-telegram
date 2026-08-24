@@ -80,7 +80,7 @@ async def send_rate_alert(data: RateAlert):
     text = (
         f"⚠️ 请求频率预警\n"
         f"用户: {data['name']}\n"
-        f"60 秒内生成 token: {data['tokens']}\n"
+        f"60 秒内累计 token: {data['tokens']}\n"
         f"时间: {data['time']}"
     )
     for uid in CONFIG.telegram.admins:
