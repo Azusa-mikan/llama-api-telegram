@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Any
 
 import yaml
 from pydantic import BaseModel
@@ -19,6 +19,7 @@ class LlamaRemoteConfig(BaseModel):
     api_key: str = ""
     control_url: str = ""
     control_token: str = ""
+    model_parameters: dict[str, Any] = {}
 
 
 class DatabaseConfig(BaseModel):

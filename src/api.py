@@ -162,6 +162,7 @@ async def chat_completions(
     user: dict = Depends(require_user),
 ):
     await _record_request(user, request)
+    body = {**body, **CONFIG.llama_remote.model_parameters}
     if body.get("stream"):
         return await _stream_completion(body, user)
     return await _plain_completion(body, user)
