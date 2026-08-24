@@ -54,7 +54,7 @@ async def _ensure_user(message: types.Message) -> None:
             user.id, user.full_name or user.username or str(user.id)
         )
     except Exception:
-        pass
+        tglog.exception("注册用户失败")
 
 
 async def _get_user(telegram_id: int) -> users_service.UserView | None:
@@ -82,19 +82,21 @@ async def cmd_start(message: types.Message):
         message,
         "欢迎使用 Azusa-Mikan 翻译服务 🤖\n"
         "基于 AI 大模型的翻译 API，完全自建，不保证稳定。\n"
-        "/key — 注册并获取 API Key\n"
+        "/key — 获取 API Key\n"
         "/status — 查看服务状态",
     )
 
 
 @bot.message_handler(commands=["key"])
 async def cmd_key(message: types.Message):
-    await _ensure_user(message)
     uid = _uid(message)
     if uid is None:
         return
     u = await _get_user(uid)
-    if u is None or u.banned:
+    if u is None:
+        await bot.reply_to(message, "你尚未注册，请发 /start 注册")
+        return
+    if u.banned:
         await bot.reply_to(message, "你已被禁止使用此翻译服务")
         return
 

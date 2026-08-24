@@ -204,6 +204,7 @@ async def _stream_completion(body: dict, user: dict):
     return StreamingResponse(
         _iter_stream(resp, user),
         media_type="text/event-stream",
+        headers={"X-Accel-Buffering": "no"},
     )
 
 

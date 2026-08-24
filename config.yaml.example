@@ -16,4 +16,9 @@ llama_remote:
   api_key: ""                               # 远端 --api-key（未启用留空）
   control_url: "http://<remote>:9090"       # Windows agent 控制地址
   control_token: ""                         # agent 鉴权 token
-  model_parameters: {}                      # 强制覆盖的采样参数（配置值优先于客户端传入）
+  model_parameters:                         # 强制覆盖的采样参数（配置值优先于客户端传入）
+    temperature: 0.7
+    top_p: 0.6
+    top_k: 20
+    repetition_penalty: 1.05
+    max_tokens: 4096
