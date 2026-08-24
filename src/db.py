@@ -1,4 +1,4 @@
-import base64
+import hashlib
 import secrets
 from datetime import datetime
 from pathlib import Path
@@ -84,14 +84,8 @@ def _new_key() -> str:
     return "sk-" + secrets.token_hex(32)
 
 
-def _obfuscate(raw: str) -> str:
-    secret = CONFIG.secret.encode()
-    if not secret:
-        return raw
-    data = raw.encode()
-    return base64.b64encode(
-        bytes(b ^ secret[i % len(secret)] for i, b in enumerate(data))
-    ).decode()
+def _hash_key(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def _user_dict(row: User) -> dict:
@@ -124,7 +118,7 @@ async def get_user_by_tgid(tgid: int) -> dict | None:
 async def get_user_by_key(api_key: str) -> dict | None:
     async with async_session() as s:
         row = await s.scalar(
-            select(User).where(User.api_key == _obfuscate(api_key))
+            select(User).where(User.api_key == _hash_key(api_key))
         )
         return _user_dict(row) if row else None
 
@@ -134,7 +128,7 @@ async def add_user(tgid: int, name: str) -> dict:
         row = await s.scalar(select(User).where(User.tgid == tgid))
         if row is None:
             raw_key = _new_key()
-            row = User(tgid=tgid, name=name, api_key=_obfuscate(raw_key))
+            row = User(tgid=tgid, name=name, api_key=_hash_key(raw_key))
             s.add(row)
             await s.commit()
             await s.refresh(row)
@@ -148,7 +142,7 @@ async def rotate_key(tgid: int) -> dict | None:
         if row is None:
             return None
         raw_key = _new_key()
-        row.api_key = _obfuscate(raw_key)
+        row.api_key = _hash_key(raw_key)
         await s.commit()
         await s.refresh(row)
         return {**_user_dict(row), "api_key": raw_key}
