@@ -8,9 +8,8 @@ from src.constant import TIME_FORMAT
 
 TZ = ZoneInfo("Asia/Shanghai")
 
-ALERT_WINDOW = 60.0
-ALERT_STREAK = 2
-ALERT_THROTTLE = 300.0
+REQUEST_WINDOW_10M = 10 * 60.0
+REQUEST_WINDOW_1H = 60 * 60.0
 
 
 class Counters:
@@ -22,9 +21,7 @@ class Counters:
         self._last_used: dict[int, datetime] = {}
         self._ips: dict[int, set[str]] = {}
         self._new_ips: dict[int, set[str]] = {}
-        self._tokens: dict[int, deque[tuple[float, int]]] = {}
-        self._streak: dict[int, int] = {}
-        self._last_alert: dict[int, float] = {}
+        self._requests: dict[int, deque[float]] = {}
         self._total = 0
         self._today = 0
         self._flushed_total = 0
@@ -82,28 +79,28 @@ class Counters:
                 "today_requests": self._today,
             }
 
-    def record_tokens(self, tgid: int, tokens: int, limit: int) -> tuple[bool, int]:
-        """记录总 token 并维护滑动窗口。返回 (是否触发预警, 窗口内 token 总数)。"""
+    def record_request(
+        self, tgid: int, limit_10m: int, limit_1h: int
+    ) -> tuple[bool, str | None, int]:
+        """记录请求并返回 (是否告警, 窗口名称, 窗口请求数)。"""
         with self._lock:
             now = time.monotonic()
-            q = self._tokens.setdefault(tgid, deque())
-            q.append((now, tokens))
-            while q and now - q[0][0] > ALERT_WINDOW:
+            q = self._requests.setdefault(tgid, deque())
+            q.append(now)
+            while q and now - q[0] > REQUEST_WINDOW_1H:
                 q.popleft()
-            total = sum(t for _, t in q)
 
-            if total >= limit:
-                self._streak[tgid] = self._streak.get(tgid, 0) + 1
-            else:
-                self._streak[tgid] = 0
-
-            alerted = (
-                self._streak[tgid] >= ALERT_STREAK
-                and now - self._last_alert.get(tgid, 0.0) >= ALERT_THROTTLE
+            count_10m = sum(
+                1 for timestamp in q if now - timestamp <= REQUEST_WINDOW_10M
             )
-            if alerted:
-                self._last_alert[tgid] = now
-            return alerted, total
+            count_1h = len(q)
+            if count_10m >= limit_10m:
+                window, count = "10 分钟", count_10m
+            elif count_1h >= limit_1h:
+                window, count = "1 小时", count_1h
+            else:
+                window, count = None, 0
+            return window is not None, window, count
 
     def drain(self) -> dict:
         """取走自上次落盘以来的增量并清零增量区。"""

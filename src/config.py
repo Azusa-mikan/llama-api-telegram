@@ -35,7 +35,8 @@ class FinalConfig(BaseModel):
     bind: str
     port: int
     secret: str
-    alert_token_limit: int = 5000
+    alert_requests_10m: int = 3
+    alert_requests_1h: int = 10
     public_url: str
     database: DatabaseConfig
     telegram: TelergamConfig

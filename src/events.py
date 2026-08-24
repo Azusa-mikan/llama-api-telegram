@@ -19,7 +19,8 @@ class RateAlert(TypedDict):
     type: Literal["rate_alert"]
     tgid: int
     name: str
-    tokens: int
+    window: str
+    requests: int
     time: str
 
 

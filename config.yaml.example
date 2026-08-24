@@ -1,7 +1,8 @@
 bind: 0.0.0.0
 port: 8000
 secret: ""           # 管理 key（X-Admin-Key），可被 ADMIN_KEY 环境变量覆盖
-alert_token_limit: 5000  # 60 秒内输入 + 输出 token 总量
+alert_requests_10m: 3    # 单用户 10 分钟内请求数达到此值时告警
+alert_requests_1h: 10   # 单用户 1 小时内请求数达到此值时告警
 public_url: ""             # 对外 API 地址（/start 和 /status 展示给用户）
 database:
   type: sqlite
