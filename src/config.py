@@ -15,7 +15,8 @@ class TelergamConfig(BaseModel):
 
 class LlamaRemoteConfig(BaseModel):
     base_url: str
-    model: str
+    # 键：/v1/models 展示名；值：实际请求名
+    model: dict[str, str]
     api_key: str = ""
     control_url: str = ""
     control_token: str = ""

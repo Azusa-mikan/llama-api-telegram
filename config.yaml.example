@@ -12,7 +12,8 @@ telegram:
   admins: []         # 管理员 tgid 列表
 llama_remote:
   base_url: "http://<remote>:8080"          # 远端 llama-server 推理地址
-  model: "Hy-MT2-7B"                        # 远端模型 id
+  model:
+    "Hy-MT2-7B": "Hy-MT2-7B"              # 键 = /v1/models 展示名，值 = 实际请求名
   api_key: ""                               # 远端 --api-key（未启用留空）
   control_url: "http://<remote>:9090"       # Windows agent 控制地址
   control_token: ""                         # agent 鉴权 token

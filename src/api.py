@@ -202,7 +202,11 @@ async def chat_completions(
     user: dict = Depends(require_user),
 ):
     await _record_request(user, request)
-    body = {"model": CONFIG.llama_remote.model, **body, **CONFIG.llama_remote.model_parameters}
+    requested = body.get("model") or next(iter(CONFIG.llama_remote.model), None)
+    mapped = (
+        CONFIG.llama_remote.model.get(requested, requested) if requested else None
+    )
+    body = {"model": mapped, **body, **CONFIG.llama_remote.model_parameters}
     if body.get("stream"):
         return await _stream_completion(body, user)
     return await _plain_completion(body, user)
@@ -275,13 +279,13 @@ async def _iter_stream(resp: httpx.Response, tgid: int, started_at: float):
 
 @app.get("/v1/models")
 async def list_models(_: dict = Depends(require_user)):
-    try:
-        resp = await _client.get("/v1/models", headers=_remote_headers())
-    except httpx.HTTPError:
-        raise HTTPException(status_code=503, detail="model not running")
-    if resp.status_code != 200:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
-    return resp.json()
+    return {
+        "object": "list",
+        "data": [
+            {"id": name, "object": "model", "created": 0, "owned_by": "llamacpp"}
+            for name in CONFIG.llama_remote.model
+        ],
+    }
 
 
 @app.post("/admin/agent/event", dependencies=[Depends(require_admin)])
