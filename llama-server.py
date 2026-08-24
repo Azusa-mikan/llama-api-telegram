@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 import uvicorn
@@ -23,9 +24,29 @@ NOTIFY_TOKEN = CONFIG.get("notify_token", "")
 
 logger = logging.getLogger("llama-server")
 
+
+_QUIET_PATHS = {"/status", "/health"}
+
+
+class _QuietRequestFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name == "httpx" and len(record.args) >= 2:
+            method, url = record.args[0], record.args[1]
+            return not (
+                str(method) == "GET"
+                and urlsplit(str(url)).path in _QUIET_PATHS
+            )
+        message = record.getMessage()
+        return '"GET /status HTTP/' not in message and '"GET /health HTTP/' not in message
+
+
+stream_handler = logging.StreamHandler()
+stream_handler.addFilter(_QuietRequestFilter())
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    handlers=[stream_handler],
 )
 
 _job: int | None = None
