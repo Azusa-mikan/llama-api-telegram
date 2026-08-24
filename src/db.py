@@ -12,6 +12,9 @@ from sqlalchemy import (
     Integer,
     JSON,
     String,
+    Float,
+    inspect,
+    text,
     select,
     update,
 )
@@ -39,7 +42,10 @@ def _db_url() -> str:
     return f"postgresql+asyncpg://{quote_plus(db.user)}:{quote_plus(db.password)}@{db.host}:{db.port}/{db.name}"
 
 
-engine = create_async_engine(_db_url())
+engine = create_async_engine(
+    _db_url(),
+    connect_args={"timeout": 5} if CONFIG.database.type == "sqlite" else {},
+)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
@@ -58,6 +64,8 @@ class User(Base):
     usage_count: Mapped[int] = mapped_column(Integer, default=0)
     final_usage_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     ip_addresses: Mapped[list] = mapped_column(JSON, default=list)
+    daily_usage_date: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    daily_busy_seconds: Mapped[float] = mapped_column(Float, default=0.0)
 
 
 class Stats(Base):
@@ -72,10 +80,22 @@ class Stats(Base):
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_migrate_user_usage_columns)
     async with async_session() as s:
         if await s.get(Stats, 1) is None:
             s.add(Stats(id=1, total_requests=0, today_requests=0, stat_date=_today()))
             await s.commit()
+
+
+def _migrate_user_usage_columns(connection) -> None:
+    columns = {column["name"] for column in inspect(connection).get_columns("users")}
+    additions = {
+        "daily_usage_date": "VARCHAR(10)",
+        "daily_busy_seconds": "FLOAT NOT NULL DEFAULT 0.0",
+    }
+    for name, definition in additions.items():
+        if name not in columns:
+            connection.execute(text(f"ALTER TABLE users ADD COLUMN {name} {definition}"))
 
 
 def _today() -> str:
@@ -169,9 +189,10 @@ async def flush_counters(data: dict) -> None:
     ips = data["ips"]
     total_delta = data["total_delta"]
     today_delta = data["today_delta"]
+    busy_seconds = data["busy_seconds"]
     date = data["date"]
 
-    if not (usage or new_ips or total_delta or today_delta):
+    if not (usage or new_ips or total_delta or today_delta or busy_seconds):
         return
 
     async with async_session() as s:
@@ -190,6 +211,14 @@ async def flush_counters(data: dict) -> None:
                 .where(User.tgid == tgid)
                 .values(ip_addresses=sorted(ips.get(tgid, ())))
             )
+        for tgid, seconds in busy_seconds.items():
+            row = await s.scalar(select(User).where(User.tgid == tgid))
+            if row is None:
+                continue
+            if row.daily_usage_date != date:
+                row.daily_usage_date = date
+                row.daily_busy_seconds = 0.0
+            row.daily_busy_seconds += seconds
 
         stats = await s.get(Stats, 1)
         if stats is None:
@@ -218,3 +247,22 @@ async def seed_counters() -> dict:
             "date": stats.stat_date if stats else "",
             "ips": ips,
         }
+
+
+async def get_daily_usage(date: str) -> list[dict]:
+    async with async_session() as s:
+        result = await s.execute(
+            select(
+                User.tgid,
+                User.name,
+                User.daily_busy_seconds,
+            ).where(User.daily_usage_date == date, User.daily_busy_seconds > 0)
+        )
+        return [
+            {
+                "tgid": tgid,
+                "name": name,
+                "seconds": busy_seconds,
+            }
+            for tgid, name, busy_seconds in result.all()
+        ]

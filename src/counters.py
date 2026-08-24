@@ -1,16 +1,11 @@
 import threading
 import time
-from collections import deque
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from src.constant import TIME_FORMAT
 
 TZ = ZoneInfo("Asia/Shanghai")
-
-REQUEST_WINDOW_10M = 10 * 60.0
-REQUEST_WINDOW_1H = 60 * 60.0
-
 
 class Counters:
     """内存用量计数：请求路径只碰这里，定期由 flush 落盘。"""
@@ -21,7 +16,8 @@ class Counters:
         self._last_used: dict[int, datetime] = {}
         self._ips: dict[int, set[str]] = {}
         self._new_ips: dict[int, set[str]] = {}
-        self._requests: dict[int, deque[float]] = {}
+        self._busy_seconds: dict[int, float] = {}
+        self._daily_busy_seconds: dict[int, float] = {}
         self._total = 0
         self._today = 0
         self._flushed_total = 0
@@ -53,6 +49,7 @@ class Counters:
             self._today_date = current_date
             self._today = 0
             self._flushed_today = 0
+            self._daily_busy_seconds = {}
 
     def record(self, tgid: int, ip: str) -> tuple[bool, int, str]:
         """纯内存记账。返回 (是否新 IP, 累计 IP 数, 本次时间串)。"""
@@ -79,28 +76,25 @@ class Counters:
                 "today_requests": self._today,
             }
 
-    def record_request(
-        self, tgid: int, limit_10m: int, limit_1h: int
-    ) -> tuple[bool, str | None, int]:
-        """记录请求并返回 (是否告警, 窗口名称, 窗口请求数)。"""
-        with self._lock:
-            now = time.monotonic()
-            q = self._requests.setdefault(tgid, deque())
-            q.append(now)
-            while q and now - q[0] > REQUEST_WINDOW_1H:
-                q.popleft()
+    def begin_request(self) -> float:
+        """Return a monotonic start time for a model request."""
+        return time.monotonic()
 
-            count_10m = sum(
-                1 for timestamp in q if now - timestamp <= REQUEST_WINDOW_10M
+    def finish_request(self, tgid: int, started_at: float) -> None:
+        """Record the completed request's elapsed model-proxy time."""
+        with self._lock:
+            self._rollover_locked()
+            duration = max(0.0, time.monotonic() - started_at)
+            self._daily_busy_seconds[tgid] = (
+                self._daily_busy_seconds.get(tgid, 0.0) + duration
             )
-            count_1h = len(q)
-            if count_10m >= limit_10m:
-                window, count = "10 分钟", count_10m
-            elif count_1h >= limit_1h:
-                window, count = "1 小时", count_1h
-            else:
-                window, count = None, 0
-            return window is not None, window, count
+            self._busy_seconds[tgid] = self._busy_seconds.get(tgid, 0.0) + duration
+
+    def daily_usage_snapshot(self) -> str:
+        """Return the current local date for the daily summary."""
+        with self._lock:
+            self._rollover_locked()
+            return self._today_date
 
     def drain(self) -> dict:
         """取走自上次落盘以来的增量并清零增量区。"""
@@ -113,11 +107,13 @@ class Counters:
                 "ips": {tgid: set(values) for tgid, values in self._ips.items()},
                 "total_delta": self._total - self._flushed_total,
                 "today_delta": self._today - self._flushed_today,
+                "busy_seconds": dict(self._busy_seconds),
                 "date": self._today_date,
             }
             self._usage = {}
             self._last_used = {}
             self._new_ips = {}
+            self._busy_seconds = {}
             self._flushed_total = self._total
             self._flushed_today = self._today
             return data
@@ -133,6 +129,8 @@ class Counters:
                     self._last_used[tgid] = value
             for tgid, values in data["new_ips"].items():
                 self._new_ips.setdefault(tgid, set()).update(values)
+            for tgid, seconds in data["busy_seconds"].items():
+                self._busy_seconds[tgid] = self._busy_seconds.get(tgid, 0.0) + seconds
             self._flushed_total -= data["total_delta"]
             if data["date"] == self._today_date:
                 self._flushed_today -= data["today_delta"]

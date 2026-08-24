@@ -16,14 +16,16 @@ from src.counters import counters
 from src.db import (
     TZ,
     flush_counters,
+    get_daily_usage,
     get_user_by_key,
     init_db,
     seed_counters,
 )
-from src.events import alert_queue, publish_alert
+from src.events import UsageRow, alert_queue, publish_alert
 
 FLUSH_INTERVAL = 5.0
 STATUS_POLL_INTERVAL = 3.0
+USAGE_SUMMARY_INTERVAL = 60 * 60.0
 
 _client: httpx.AsyncClient
 _last_status: str | None = None
@@ -100,6 +102,25 @@ async def _flush_loop():
             apilog.exception("计数落盘失败")
 
 
+async def _usage_summary_loop() -> None:
+    while True:
+        await asyncio.sleep(USAGE_SUMMARY_INTERVAL)
+        date = counters.daily_usage_snapshot()
+        raw_rows = await get_daily_usage(date)
+        if not raw_rows:
+            continue
+        rows: list[UsageRow] = [
+            {
+                "tgid": int(row["tgid"]),
+                "name": str(row["name"]),
+                "seconds": float(row["seconds"]),
+            }
+            for row in raw_rows
+        ]
+        rows.sort(key=lambda row: row["seconds"], reverse=True)
+        publish_alert({"type": "usage_summary", "date": date, "rows": rows})
+
+
 def require_admin(x_admin_key: str = Header(default="")) -> None:
     if not CONFIG.secret or not hmac.compare_digest(x_admin_key, CONFIG.secret):
         raise HTTPException(status_code=401, detail="invalid admin key")
@@ -116,27 +137,7 @@ async def require_user(authorization: str = Header(default="")) -> dict:
     return user
 
 
-def _maybe_request_alert(user: dict) -> None:
-    alerted, window, requests = counters.record_request(
-        user["tgid"], CONFIG.alert_requests_10m, CONFIG.alert_requests_1h
-    )
-    if not alerted:
-        return
-    assert window is not None
-    publish_alert(
-        {
-            "type": "rate_alert",
-            "tgid": user["tgid"],
-            "name": user["name"],
-            "window": window,
-            "requests": requests,
-            "time": datetime.now(TZ).strftime(TIME_FORMAT),
-        }
-    )
-
-
 async def _record_request(user: dict, request: Request) -> None:
-    _maybe_request_alert(user)
     ip = request.client.host if request.client else "unknown"
     is_new, ip_count, event_time = counters.record(user["tgid"], ip)
     if is_new:
@@ -168,6 +169,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(start_bot()),
         asyncio.create_task(listen_alerts()),
         asyncio.create_task(_monitor_llama_status()),
+        asyncio.create_task(_usage_summary_loop()),
         flusher,
     ]
     yield
@@ -202,6 +204,14 @@ async def chat_completions(
 
 
 async def _plain_completion(body: dict, user: dict):
+    started_at = counters.begin_request()
+    try:
+        return await _plain_completion_impl(body, user)
+    finally:
+        counters.finish_request(user["tgid"], started_at)
+
+
+async def _plain_completion_impl(body: dict, user: dict):
     try:
         resp = await _client.post(
             "/v1/chat/completions", json=body, headers=_remote_headers()
@@ -225,12 +235,14 @@ async def _plain_completion(body: dict, user: dict):
 
 
 async def _stream_completion(body: dict, user: dict):
+    started_at = counters.begin_request()
     try:
         req = _client.build_request(
             "POST", "/v1/chat/completions", json=body, headers=_remote_headers()
         )
         resp = await _client.send(req, stream=True)
     except httpx.HTTPError:
+        counters.finish_request(user["tgid"], started_at)
         return JSONResponse(
             status_code=503, content=_openai_error(503, "model not running")
         )
@@ -238,20 +250,22 @@ async def _stream_completion(body: dict, user: dict):
         await resp.aread()
         content = _try_json(resp) or _openai_error(resp.status_code, resp.text)
         await resp.aclose()
+        counters.finish_request(user["tgid"], started_at)
         return JSONResponse(status_code=resp.status_code, content=content)
     return StreamingResponse(
-        _iter_stream(resp),
+        _iter_stream(resp, user["tgid"], started_at),
         media_type="text/event-stream",
         headers={"X-Accel-Buffering": "no"},
     )
 
 
-async def _iter_stream(resp: httpx.Response):
+async def _iter_stream(resp: httpx.Response, tgid: int, started_at: float):
     try:
         async for line in resp.aiter_lines():
             yield (line + "\n").encode()
     finally:
         await resp.aclose()
+        counters.finish_request(tgid, started_at)
 
 
 @app.get("/v1/models")

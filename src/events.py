@@ -15,16 +15,19 @@ class LlamaStatusEvent(TypedDict):
     status: Literal["ready", "stopped"]
 
 
-class RateAlert(TypedDict):
-    type: Literal["rate_alert"]
+class UsageRow(TypedDict):
     tgid: int
     name: str
-    window: str
-    requests: int
-    time: str
+    seconds: float
 
 
-Event = Union[AbuseAlert, LlamaStatusEvent, RateAlert]
+class UsageSummary(TypedDict):
+    type: Literal["usage_summary"]
+    date: str
+    rows: list[UsageRow]
+
+
+Event = Union[AbuseAlert, LlamaStatusEvent, UsageSummary]
 
 alert_queue: queue.Queue[Event | None] = queue.Queue()
 

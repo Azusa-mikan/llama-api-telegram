@@ -4,7 +4,12 @@ import logging
 from src import users_service
 from src.bot import bot as main_bot
 from src.config import CONFIG
-from src.events import AbuseAlert, LlamaStatusEvent, RateAlert, alert_queue
+from src.events import (
+    AbuseAlert,
+    LlamaStatusEvent,
+    UsageSummary,
+    alert_queue,
+)
 
 logger = logging.getLogger("alert")
 SEND_RETRIES = 3
@@ -76,18 +81,23 @@ async def send_llama_status(data: LlamaStatusEvent):
     )
 
 
-async def send_rate_alert(data: RateAlert):
-    text = (
-        f"⚠️ 请求频率预警\n"
-        f"用户: {data['name']}\n"
-        f"{data['window']}内请求数: {data['requests']}\n"
-        f"时间: {data['time']}"
-    )
+async def send_usage_summary(data: UsageSummary):
+    rows = data["rows"][:10]
+    total_seconds = sum(row["seconds"] for row in data["rows"])
+    lines = [f"📊 模型使用摘要 ({data['date']})"]
+    for index, row in enumerate(rows, 1):
+        minutes = row["seconds"] / 60
+        share = row["seconds"] / total_seconds * 100 if total_seconds else 0
+        lines.append(
+            f"{index}. {row['name']}\n"
+            f"累计运行: {minutes:.1f} 分钟 | 占比: {share:.1f}%"
+        )
+    text = "\n".join(lines)
     for uid in CONFIG.telegram.admins:
         try:
             await main_bot.send_message(uid, text)
         except Exception:
-            logger.warning(f"发送频率预警给 {uid} 失败")
+            logger.warning("发送使用摘要给 %s 失败", uid)
 
 
 async def listen_alerts():
@@ -100,8 +110,8 @@ async def listen_alerts():
                 await send_new_ip(data)
             elif data["type"] == "llama_status":
                 await send_llama_status(data)
-            elif data["type"] == "rate_alert":
-                await send_rate_alert(data)
+            elif data["type"] == "usage_summary":
+                await send_usage_summary(data)
             else:
                 logger.warning("未知告警类型: %s", data.get("type"))
         except asyncio.CancelledError:
